@@ -2,7 +2,7 @@
 
 const std = @import("std");
 
-const vexlib = @import("vexlib.zig");
+const vexlib = @import("vexlib");
 const println = vexlib.println;
 const As = vexlib.As;
 const String = vexlib.String;
@@ -24,8 +24,8 @@ pub const ImageData = struct {
     width: u32,
     height: u32,
 
-    // pub fn free(self: ImageData, allocator: std.mem.Allocator) void {
-    //     allocator.free(self.data);
+    // pub fn dealloc(self: ImageData, allocator: std.mem.Allocator) void {
+    //     allocator.dealloc(self.data);
     // }
 };
 
@@ -269,8 +269,8 @@ pub fn rgba(r: u8, g: u8, b: u8, a: u8) [4]u8 {
 }
 pub fn color(str_: []const u8) [4]u8 {
     var rgbaVal = [_]u8{0, 0, 0, 255};
-    var str = String.newFrom(str_);
-    defer str.free();
+    var str = String.allocFrom(str_);
+    defer str.dealloc();
     str.lowerCase();
 
     if (str.charAt(0) == '#') {
@@ -279,7 +279,7 @@ pub fn color(str_: []const u8) [4]u8 {
         var i: u32 = 0;
         var slc = str.slice(As.u32(str.indexOf("(")) + 1, str.len() - 1);
         var vals = slc.split(","); 
-        defer vals.free();
+        defer vals.dealloc();
         while (i < vals.len) : (i += 1) {
             var valSlc = vals.get(i);
             const byte = Int.parse(valSlc.trimStart(), 10);
@@ -289,13 +289,13 @@ pub fn color(str_: []const u8) [4]u8 {
             rgbaVal[3] *= 255;
         }
         var temp = vals.join(",");
-        defer temp.free();
+        defer temp.dealloc();
     } else {
         var i: u32 = 0;
         while (i < CSS_COLORS.len) : (i += 2) {
             if (str.equals(CSS_COLORS[i])) {
-                var strNext = String.newFrom(CSS_COLORS[i + 1]);
-                defer strNext.free();
+                var strNext = String.allocFrom(CSS_COLORS[i + 1]);
+                defer strNext.dealloc();
                 return hexToRGBA(strNext);
             }
         }
@@ -752,8 +752,8 @@ fn renderPolygon(
     const clrA: u8 = clr[3];
 
     var y: i32 = 0; while (y < imageData.height): (y += 1) {
-        var intersects = Array([2]i32).new(8);
-        defer intersects.free();
+        var intersects = Array([2]i32).alloc(8);
+        defer intersects.dealloc();
 
         var l: u32 = 0; while (l < vertices.len - 1) : (l += 2) {
             var idxP2 = l + 2;
@@ -845,8 +845,8 @@ fn renderPolygon(
 //                 oppositePt %= 4;
 //             }
 
-//             var pts = Uint32Array.new(4);
-//             defer pts.free();
+//             var pts = Uint32Array.alloc(4);
+//             defer pts.dealloc();
 //             pts.append(0);
 //             pts.append(1);
 //             pts.append(2);
@@ -995,9 +995,9 @@ pub const Path2D = struct {
     commands: Uint8Array,
     args: Int32Array,
 
-    pub fn new() Path2D {
-        const arr8 = Uint8Array.new(1000);
-        const arr32 = Int32Array.new(1000);
+    pub fn alloc() Path2D {
+        const arr8 = Uint8Array.alloc(1000);
+        const arr32 = Int32Array.alloc(1000);
         return Path2D {
             .commands = arr8,
             .args = arr32,
@@ -1033,11 +1033,11 @@ pub const RenderingContext2D = struct {
     textAlign: [:0]const u8,
     textBaseline: [:0]const u8,
 
-    pub fn new(canvas_: Canvas, contextAttributes: anytype) RenderingContext2D {
+    pub fn alloc(canvas_: Canvas, contextAttributes: anytype) RenderingContext2D {
         _=contextAttributes;
         var canvas = canvas_;    
     
-        var pixels = Uint8Array.new(canvas.width * canvas.height * 4);
+        var pixels = Uint8Array.alloc(canvas.width * canvas.height * 4);
         pixels.fill(0, -1);
         const imgData = ImageData {
             .colorSpace = "srgb",
@@ -1047,7 +1047,7 @@ pub const RenderingContext2D = struct {
         };
 
         const canvasPtr: *Canvas = &canvas;
-        const path = Path2D.new();
+        const path = Path2D.alloc();
 
         return RenderingContext2D {
             .imageData = imgData,
@@ -1079,10 +1079,10 @@ pub const RenderingContext2D = struct {
         };
     }
 
-    pub fn free(self: *RenderingContext2D) void {
-        self.imageData.data.free();
-        self.path.commands.free();
-        self.path.args.free();
+    pub fn dealloc(self: *RenderingContext2D) void {
+        self.imageData.data.dealloc();
+        self.path.commands.dealloc();
+        self.path.args.dealloc();
     }
 
     pub fn beginPath(self: *RenderingContext2D) void {
@@ -1303,7 +1303,7 @@ pub const Canvas = struct {
     height: u32,
     context: ?RenderingContext2D,
 
-    pub fn new(allocator_: std.mem.Allocator, width: u32, height: u32) Canvas {
+    pub fn alloc(allocator_: std.mem.Allocator, width: u32, height: u32) Canvas {
         const allocator = allocator_;
         return Canvas {
             .allocator = allocator,
@@ -1313,15 +1313,15 @@ pub const Canvas = struct {
         };
     }
 
-    pub fn free(self: *Canvas) void {
+    pub fn dealloc(self: *Canvas) void {
         var ctx = self.context.?;
-        ctx.free();
+        ctx.dealloc();
     }
 
     pub fn getContext(self: *Canvas, contextType: [:0]const u8, contextAttributes: anytype) CanvasError!?RenderingContext2D {
         if (std.mem.eql(u8, contextType, "2d")) {
             if (self.context == null) {
-                self.context = RenderingContext2D.new(self.*, contextAttributes);
+                self.context = RenderingContext2D.alloc(self.*, contextAttributes);
             }
             return self.context;
         } else if (std.mem.eql(u8, contextType, "webgl") or std.mem.eql(u8, contextType, "webgl")) {

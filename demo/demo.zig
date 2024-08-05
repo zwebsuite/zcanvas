@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const vexlib = @import("lib/vexlib.zig");
+const vexlib = @import("vexlib");
 const Math = vexlib.Math;
 const String = vexlib.String;
 const print = vexlib.print;
@@ -8,7 +8,7 @@ const println = vexlib.println;
 const Uint8Array = vexlib.Uint8Array;
 const Int = vexlib.Int;
 
-const htmlCanvas = @import("lib/html-canvas.zig");
+const htmlCanvas = @import("zcanvas");
 const Canvas = htmlCanvas.Canvas;
 const ImageData = htmlCanvas.ImageData;
 const rgb = htmlCanvas.rgb;
@@ -16,7 +16,7 @@ const rgba = htmlCanvas.rgba;
 const color = htmlCanvas.color;
 
 const sdl = @cImport({
-    @cInclude("lib/sdllib.h");
+    @cInclude("./sdllib.h");
 });
 
 // SDL constants
@@ -62,8 +62,8 @@ pub fn main() !void {
     
     // println(Float.parse("1010.0101", 10));
 
-    // var temp = String.newFrom(" 255");
-    // defer temp.free();
+    // var temp = String.allocFrom(" 255");
+    // defer temp.dealloc();
     // print("#");
     // print(temp.trim());
     // print("#");
@@ -71,8 +71,8 @@ pub fn main() !void {
     // println(Math.factorial(5));
 
     // create canvas
-    var canvas = Canvas.new(allocator, 800, 600);
-    defer canvas.free();
+    var canvas = Canvas.alloc(allocator, 800, 600);
+    defer canvas.dealloc();
     var ctx = (canvas.getContext("2d", .{}) catch unreachable).?;
 
     // draw
