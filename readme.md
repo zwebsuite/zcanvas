@@ -1,31 +1,28 @@
 # zcanvas
-A cross platform HTML Canvas implementation in pure Zig.
+A cross platform HTML Canvas implementation in Zig.
 
-## Origin
-VExcess wanted to spawn a window and draw to it using the HTML Canvas API. He was 
-unable to find such a library so he decided to create his own library from scratch.
-Later, he discovered the `skia-canvas` npm library that does exactly 
-what he wanted. Similarly, there is the `canvaskit-wasm` library for emulating the
-canvas API in web assembly. This project was then rededicated to be the
-HTML Canvas implementation for Zirconium browser.
+The pure Zig canvas backend is a work in progress and is far from complete and
+has poor performance. Alternatively there is the Cairo backend which is faster
+and more complete at the cost of being more heavyweight and relying on C which
+requires linking the C standard library.
 
-## Use Anywhere
-Because the library is written in Zig it can easily be used by Zig, C, and C++.
-Since zcanvas is self standing and doesn't rely on external libraries it
-can be compiled to run anywhere that LLVM supports including freestanding web assembly.
+## Install Dependencies
+```
+sudo apt-get install libsdl2-dev
+sudo apt-get install libcairo2-dev
+```
 
-### Installation
-View `build.zig` and `demo/demo.zig` to see example usage.
+## Build Demo
+This project uses the jvbuild build system. Use `jvbuild run demo_cairo` or `jvbuild run demo_software` to run the cairo backed and software backed demos respectively.
 
-### Rendering Output
-zcanvas only computes the graphics, but it does not render them. To render the
-graphics import a third party library such as SDL via `sudo apt install libsdl2-dev`.
-Then copy the `sdllib.c` and `sdllib.h` files into your project and follow the example
-in demo to create an app window and render the canvas' drawing buffer to the window.
+## Rendering Output
+zcanvas provides a window library based on SDL2 for rendering output to a
+desktop window and handling input.
 
 ## API
 The JS wrapper has the same API as a real HTML canvas context. The Zig version of the library due to being a staticly typed language has a few differences for example instead of `ctx.fillStyle = "#ffffff"` you must use `ctx.fillStyle = [_]u8{255, 255, 255, 255}` instead. Read
 `docs.md` to view full Zig API.
 
-## Build Demo
-Build the demo using `zig build` then run `make run` to run the demo
+## Shout out
+Check out [NoBS Code](https://www.youtube.com/watch?v=hpiILbMkF9w) on YouTube.
+They taught me the math required to render shapes.
