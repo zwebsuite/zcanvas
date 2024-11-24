@@ -9,9 +9,11 @@ const String = vexlib.String;
 const Math = vexlib.Math;
 const Int = vexlib.Int;
 const Array = vexlib.Array;
+const Map = vexlib.Map;
 const Uint8Array = vexlib.Uint8Array;
 const Int32Array = vexlib.Int32Array;
 const Uint32Array = vexlib.Uint32Array;
+const Float32Array = vexlib.Float32Array;
 
 const pngCodec: ?*usize = null;
 const jpegCodec: ?*usize = null;
@@ -19,7 +21,7 @@ const fontCodec: ?*usize = null;
 const fonts: ?*usize = null;
 
 const softBackend = @import("./soft-backend.zig");
-const cairoBackend = @import("./cairo-backend.zig");
+pub const cairoBackend = @import("./cairo-backend.zig");
 
 pub const Window = @import("./window.zig");
 
@@ -278,11 +280,11 @@ const PathCommand = enum(u8) {
 
 pub const Path2D = struct {
     commands: Uint8Array,
-    args: Int32Array,
+    args: Float32Array,
 
     pub fn alloc() Path2D {
         const arr8 = Uint8Array.alloc(1000);
-        const arr32 = Int32Array.alloc(1000);
+        const arr32 = Float32Array.alloc(1000);
         return Path2D {
             .commands = arr8,
             .args = arr32,
@@ -299,6 +301,28 @@ pub const ContextError = error {
     InitFail
 };
 
+pub const libQOF = @import("./QOF.zig");
+pub const QuiteOkFont = libQOF.QuiteOkFont;
+pub const TextMetrics = libQOF.TextMetrics;
+
+pub const FontInfo = struct {
+    family: String,
+    font: QuiteOkFont,
+    size: f32,
+    bold: bool
+};
+
+pub const ImageFormat = enum {
+    PNG
+};
+
+pub const Image = struct {
+    format: ImageFormat,
+    width: u32,
+    height: u32,
+    _imgSurface: *cairoBackend.cairo.cairo_surface_t
+};
+
 pub const RenderingContext2D = struct {
     _softItems: softBackend.SoftwareItems = undefined,
     _cairoItems: cairoBackend.CairoItems = undefined,
@@ -307,12 +331,12 @@ pub const RenderingContext2D = struct {
     strokeStyle: [4]u8,
     lineWidth: u32,
     matrices: []usize,
-    pen: [2]i32,
+    pen: [2]f32,
     path: Path2D,
     canvas: *Canvas,
     direction: [:0]const u8,
     filter: [:0]const u8,
-    font: [:0]const u8,
+    font: FontInfo,
     fontKerning: [:0]const u8,
     globalAlpha: f32,
     globalCompositeOperation: [:0]const u8,
@@ -334,17 +358,29 @@ pub const RenderingContext2D = struct {
 
         const path = Path2D.alloc();
 
+        const defaultFont = QuiteOkFont{
+            .ascent = 0,
+            .descent = 0,
+            .glyphs = Array(Float32Array).alloc(0),
+            .characterMap = Map(u8, [2]f32).alloc()
+        };
+
         var myContext = RenderingContext2D {
             .fillStyle = [_]u8{0, 0, 0, 255},
             .strokeStyle = [_]u8{0, 0, 0, 255},
             .lineWidth = 1,
             .matrices = &[_]usize{},
-            .pen = [_]i32{0, 0},
+            .pen = [_]f32{0, 0},
             .path = path,
             .canvas = canvas,
             .direction = "ltr",
             .filter = "none",
-            .font = "10px sans-serif",
+            .font = FontInfo{
+                .family = String.usingRawString("sans-serif"),
+                .font = defaultFont,
+                .size = 10,
+                .bold = false
+            },
             .fontKerning = "auto",
             .globalAlpha = 1,
             .globalCompositeOperation = "source-over",
@@ -376,15 +412,18 @@ pub const RenderingContext2D = struct {
             .Software => {
                 var pixels = Uint8Array.alloc(renderWidth * rendererHeight * 4);
                 pixels.fill(0, -1);
-                myContext._softItems = softBackend.SoftwareItems {
-                    .imgData = ImageData {
+                myContext._softItems = softBackend.SoftwareItems{
+                    .imgData = ImageData{
                         .colorSpace = "srgb",
                         .data = pixels,
                         .width = renderWidth,
                         .height = rendererHeight
                     },
-                    .scale = canvas.scale
+                    .transforms = Array(softBackend.Transform).alloc(4)
                 };
+                myContext._softItems.transforms.append(softBackend.Transform{
+                    .scale = [_]f32{canvas.scale, canvas.scale}
+                });
             },
         }
 
@@ -410,7 +449,7 @@ pub const RenderingContext2D = struct {
         self.path.args.len = 0;
     }
 
-    pub fn moveTo(self: *RenderingContext2D, x: i32, y: i32) void {
+    pub fn moveTo(self: *RenderingContext2D, x: f32, y: f32) void {
         self.pen[0] = x;
         self.pen[1] = y;
 
@@ -419,13 +458,13 @@ pub const RenderingContext2D = struct {
         self.path.args.append(y);
     }
 
-    pub fn lineTo(self: *RenderingContext2D, x: i32, y: i32) void {
+    pub fn lineTo(self: *RenderingContext2D, x: f32, y: f32) void {
         self.path.commands.append(@intFromEnum(PathCommand.lineTo));
         self.path.args.append(x);
         self.path.args.append(y);
     }
 
-    pub fn quadraticCurveTo(self: *RenderingContext2D, cp1x: i32, cp1y: i32, x: i32, y: i32) void {
+    pub fn quadraticCurveTo(self: *RenderingContext2D, cp1x: f32, cp1y: f32, x: f32, y: f32) void {
         self.path.commands.append(@intFromEnum(PathCommand.quadraticCurveTo));
         self.path.args.append(cp1x);
         self.path.args.append(cp1y);
@@ -433,7 +472,7 @@ pub const RenderingContext2D = struct {
         self.path.args.append(y);
     }
 
-    pub fn bezierCurveTo(self: *RenderingContext2D, cp1x: i32, cp1y: i32, cp2x: i32, cp2y: i32, x: i32, y: i32) void {
+    pub fn bezierCurveTo(self: *RenderingContext2D, cp1x: f32, cp1y: f32, cp2x: f32, cp2y: f32, x: f32, y: f32) void {
         self.path.commands.append(@intFromEnum(PathCommand.bezierCurveTo));
         self.path.args.append(cp1x);
         self.path.args.append(cp1y);
@@ -443,7 +482,7 @@ pub const RenderingContext2D = struct {
         self.path.args.append(y);
     }
 
-    pub fn arc(self: *RenderingContext2D, x: i32, y: i32, radius: i32, startAngle_: f32, endAngle_: f32, counterclockwise: bool) void {
+    pub fn arc(self: *RenderingContext2D, x: f32, y: f32, radius: f32, startAngle_: f32, endAngle_: f32, counterclockwise: bool) void {
         var startAngle = startAngle_;
         var endAngle = endAngle_;
         const f32PI = As.f32(Math.PI);
@@ -487,10 +526,10 @@ pub const RenderingContext2D = struct {
         var cmdIdx: u32 = 0;
         var argIdx: u32 = 0;
         var idk: i32 = 0;
-        var currX: i32 = 0;
-        var currY: i32 = 0;
-        var curr2X: i32 = 0;
-        var curr2Y: i32 = 0;
+        var currX: f32 = 0;
+        var currY: f32 = 0;
+        var curr2X: f32 = 0;
+        var curr2Y: f32 = 0;
         while (cmdIdx < commands.len) : (cmdIdx += 1) {
             switch (commands.get(cmdIdx)) {
                 @intFromEnum(PathCommand.moveTo) => {
@@ -584,8 +623,8 @@ pub const RenderingContext2D = struct {
         
         var cmdIdx: u32 = 0;
         var argIdx: u32 = 0;
-        var currX: i32 = 0;
-        var currY: i32 = 0;
+        var currX: f32 = 0;
+        var currY: f32 = 0;
         while (cmdIdx < commands.len) : (cmdIdx += 1) {
             switch (commands.get(cmdIdx)) {
                 @intFromEnum(PathCommand.moveTo) => {
@@ -635,7 +674,7 @@ pub const RenderingContext2D = struct {
         }
     }
 
-    pub fn clearRect(self: *RenderingContext2D, x: i32, y: i32, w: i32, h: i32) void {
+    pub fn clearRect(self: *RenderingContext2D, x: f32, y: f32, w: f32, h: f32) void {
         switch (self.canvas.renderer) {
             .Cairo => {
                 cairoBackend.renderClearRect(
@@ -652,7 +691,7 @@ pub const RenderingContext2D = struct {
         }
     }
 
-    pub fn fillRect(self: *RenderingContext2D, x: i32, y: i32, w: i32, h: i32) void {
+    pub fn fillRect(self: *RenderingContext2D, x: f32, y: f32, w: f32, h: f32) void {
         switch (self.canvas.renderer) {
             .Cairo => {
                 cairoBackend.renderRectangle(
@@ -669,7 +708,7 @@ pub const RenderingContext2D = struct {
         }
     }
     
-    pub fn strokeRect(self: *RenderingContext2D, x: i32, y: i32, w: i32, h: i32) void {
+    pub fn strokeRect(self: *RenderingContext2D, x: f32, y: f32, w: f32, h: f32) void {
         switch (self.canvas.renderer) {
             .Cairo => {
                 cairoBackend.renderStrokeRectangle(
@@ -684,6 +723,105 @@ pub const RenderingContext2D = struct {
                 );
             },
         }
+    }
+
+    pub fn translate(self: *RenderingContext2D, x: f32, y: f32) void {
+        switch (self.canvas.renderer) {
+            .Cairo => {
+                cairoBackend.translate(
+                    x, y,
+                    self._cairoItems
+                );
+            },
+            .Software => {
+                self._softItems.transforms.append(softBackend.Transform{
+                    .translate = [_]f32{x, y}
+                });
+            },
+        }
+    }
+
+    pub fn scale(self: *RenderingContext2D, x: f32, y: f32) void {
+        switch (self.canvas.renderer) {
+            .Cairo => {
+                cairoBackend.scale(
+                    x, y,
+                    self._cairoItems
+                );
+            },
+            .Software => {
+                self._softItems.transforms.append(softBackend.Transform{
+                    .scale = [_]f32{x, y}
+                });
+            },
+        }
+    }
+
+    pub fn resetTransform(self: *RenderingContext2D) void {
+        switch (self.canvas.renderer) {
+            .Cairo => {
+                cairoBackend.resetTransform(
+                    self._cairoItems
+                );
+            },
+            .Software => {
+                self._softItems.transforms.len = 1;
+            },
+        }
+    }
+
+    pub fn fillText(self: *RenderingContext2D, txt: *String, x: f32, y: f32, maxWidth: f32) void {
+        switch (self.canvas.renderer) {
+            .Cairo => {
+                cairoBackend.renderFillText(
+                    txt, x, y, maxWidth,
+                    self._cairoItems, self.fillStyle, self.font, self.imageSmoothingEnabled
+                );
+            },
+            .Software => {
+                softBackend.renderFillText(
+                    txt, x, y, maxWidth, self.lineWidth,
+                    self._softItems, self.fillStyle, self.font, self.imageSmoothingEnabled
+                );
+            },
+        }
+    }
+
+    pub fn drawImage(self: *RenderingContext2D, img: Image, x: f32, y: f32) void {
+        switch (self.canvas.renderer) {
+            .Cairo => {
+                cairoBackend.drawPNG(
+                    img, x, y,
+                    self._cairoItems
+                );
+            },
+            .Software => {
+                @panic("!!");
+            },
+        }
+    }
+
+    pub fn strokeText(self: *RenderingContext2D, txt: *String, x: f32, y: f32, maxWidth: f32) void {
+        switch (self.canvas.renderer) {
+            .Cairo => {
+                cairoBackend.renderStrokeText(
+                    txt, x, y, maxWidth,
+                    self._cairoItems, self.strokeStyle, self.font, self.imageSmoothingEnabled
+                );
+            },
+            .Software => {
+                softBackend.renderStrokeText(
+                    txt, x, y, maxWidth, self.lineWidth,
+                    self._softItems, self.strokeStyle, self.font, self.imageSmoothingEnabled
+                );
+            },
+        }
+    }
+
+    pub fn measureText(self: *RenderingContext2D, txt: *String) ?TextMetrics {
+        return libQOF.measureText(
+            txt, self.font.font, self.font.size
+        );
     }
 };
 

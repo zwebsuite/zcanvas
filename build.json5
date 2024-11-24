@@ -5,15 +5,8 @@
     description: "A cross platform HTML Canvas implementation in Zig",
     author: "VExcess <github.com/vexcess>",
     modules: {
-        demo_software: {
-            root: "demo/demo-software.zig",
-            dependencies: [
-                "zcanvas",
-                "vexlib"
-            ]
-        },
-        demo_cairo: {
-            root: "demo/demo-cairo.zig",
+        demo: {
+            root: "demo/demo.zig",
             dependencies: [
                 "zcanvas",
                 "vexlib"
@@ -35,8 +28,7 @@
         }]
     },
     build: {
-        default: ["demo_cairo"],
-        demo_cairo: ["demo_cairo"],
-        demo_software: ["demo_software"],
+        default: ["demo"],
+        demo: ["demo"],
     }
 }

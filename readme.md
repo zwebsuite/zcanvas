@@ -13,7 +13,7 @@ sudo apt-get install libcairo2-dev
 ```
 
 ## Build Demo
-This project uses the jvbuild build system. Use `jvbuild run demo_cairo` or `jvbuild run demo_software` to run the cairo backed and software backed demos respectively.
+This project uses the jvbuild build system. Use `jvbuild run demo` to run example usage code.
 
 ## Rendering Output
 zcanvas provides a window library based on SDL2 for rendering output to a

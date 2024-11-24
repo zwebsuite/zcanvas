@@ -3,6 +3,8 @@ const std = @import("std");
 const zcanvas = @import("zcanvas");
 const Canvas = zcanvas.Canvas;
 const color = zcanvas.color;
+const FontInfo = zcanvas.FontInfo;
+const String = zcanvas.String;
 
 const Window = zcanvas.Window;
 const Key = Window.Key;
@@ -43,19 +45,19 @@ pub fn main() !void {
 
     const logicalWidth = 400;
     const logicalHeight = 400;
-    const renderScale = 4;
+    const renderScale = 1.5;
 
     // create a window
     var myWin = try Window.SDLWindow.alloc(.{
         .title = "Demo Window",
-        .width = logicalWidth * renderScale,
-        .height = logicalHeight * renderScale,
+        .width = As.i32(logicalWidth * renderScale),
+        .height = As.i32(logicalHeight * renderScale),
         .flags = Window.WINDOW_SHOWN
     });
     myWin.eventHandler = eventHandler; // attach event handler
 
     // create canvas & rendering context
-    var canvas = Canvas.alloc(allocator, logicalWidth, logicalHeight, renderScale, zcanvas.RendererType.Software);
+    var canvas = Canvas.alloc(allocator, logicalWidth, logicalHeight, renderScale, zcanvas.RendererType.Cairo);
     defer canvas.dealloc();
     var ctx = try canvas.getContext("2d", .{});
 
@@ -113,6 +115,14 @@ pub fn main() !void {
     ctx.lineTo(200 + 190, 20);
     ctx.lineTo(200 + 270, 90);
     ctx.closePath();
+
+    // ctx.font = FontInfo{
+    //     .family = String.usingRawString("Open Sans"),
+    //     .font = zcanvas.libQOF.decodeFont(&OpenSansFontFile),
+    //     .size = 30,
+    //     .bold = false
+    // };
+    // ctx.fillText("Hello world", 10, 50);
 
     while (running) {
         // check for events

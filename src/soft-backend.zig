@@ -2,13 +2,47 @@ const vexlib = @import("vexlib");
 const As = vexlib.As;
 const Math = vexlib.Math;
 const Array = vexlib.Array;
+const String = vexlib.String;
 
 const zcanvas = @import("./zcanvas.zig");
 const ImageData = zcanvas.ImageData;
+const QuiteOkFont = zcanvas.QuiteOkFont;
+const TextMetrics = zcanvas.TextMetrics;
+const FontInfo = zcanvas.FontInfo;
+
+pub const Transform = union(enum) {
+    scale: [2]f32,
+    translate: [2]f32
+};
+
+const JoinedTransform = struct{
+    translate: [2]f32,
+    scale: [2]f32
+};
+fn computeTransform(transforms: Array(Transform)) JoinedTransform {
+    var out = JoinedTransform{
+        .translate = [2]f32{0.0, 0.0},
+        .scale = [2]f32{1.0, 1.0}
+    };
+    var i: u32 = 0; while (i < transforms.len) : (i += 1) {
+        const trans = transforms.get(i).*;
+        switch (trans) {
+            .translate => {
+                out.translate[0] += trans.translate[0];
+                out.translate[1] += trans.translate[1];
+            },
+            .scale => {
+                out.scale[0] *= trans.scale[0];
+                out.scale[1] *= trans.scale[1];
+            }
+        }
+    }
+    return out;
+}
 
 pub const SoftwareItems = struct {
     imgData: ImageData = undefined,
-    scale: f32 = undefined
+    transforms: Array(Transform),
 };
 
 fn getLineLineIntersect(x1: i32, y1: i32, x2: i32, y2: i32, x3: i32, y3: i32, x4: i32, y4: i32) ?[2]i32 {
@@ -117,18 +151,18 @@ inline fn renderPixel(
         buff[idx+2] = b;
         // buff[idx+3] = a;
     } else {
-        const nA = As.u32(a);
-        const oR = As.u32(buff[idx]) * (255 - nA);
-        const oG = As.u32(buff[idx+1]) * (255 - nA);
-        const oB = As.u32(buff[idx+2]) * (255 - nA);
+        const nA = As.f32(a) / 255.0;
+        const oR = As.f32(buff[idx]) * (1.0 - nA);
+        const oG = As.f32(buff[idx+1]) * (1.0 - nA);
+        const oB = As.f32(buff[idx+2]) * (1.0 - nA);
         
-        const nR = As.u32(r) * nA;
-        const nG = As.u32(g) * nA;
-        const nB = As.u32(b) * nA;
+        const nR = As.f32(r) * nA;
+        const nG = As.f32(g) * nA;
+        const nB = As.f32(b) * nA;
 
-        buff[idx] = As.u8T((oR + nR));
-        buff[idx+1] = As.u8T((oG + nG));
-        buff[idx+2] = As.u8T((oB + nB));
+        buff[idx  ] = As.u8(oR + nR);
+        buff[idx+1] = As.u8(oG + nG);
+        buff[idx+2] = As.u8(oB + nB);
         // buff[idx+3] = buff[idx+3] + a;
     }
 }
@@ -156,16 +190,19 @@ pub fn renderClearRect(
 }
 
 pub fn renderLine(
-    x1_: i32, y1_: i32, x2_: i32, y2_: i32, lineWidth: u32, lineCap: u8,
+    x1_: f32, y1_: f32, x2_: f32, y2_: f32, lineWidth: u32, lineCap: u8,
     swItems: SoftwareItems, clr: [4]u8, antialiasing: bool
 ) void {
-    const sclx1 = As.i32(As.f32(x1_) * swItems.scale);
-    const scly1 = As.i32(As.f32(y1_) * swItems.scale);
-    const sclx2 = As.i32(As.f32(x2_) * swItems.scale);
-    const scly2 = As.i32(As.f32(y2_) * swItems.scale);
-    const passItems = SoftwareItems {
+    const computedTransforms = computeTransform(swItems.transforms);
+    const scalation = computedTransforms.scale;
+
+    const sclx1 = As.i32(x1_ * scalation[0]);
+    const scly1 = As.i32(y1_ * scalation[1]);
+    const sclx2 = As.i32(x2_ * scalation[0]);
+    const scly2 = As.i32(y2_ * scalation[1]);
+    const passItems = SoftwareItems{
         .imgData = swItems.imgData,
-        .scale = 1
+        .transforms = swItems.transforms.slice(0, Math.min(swItems.transforms.len, 1))
     };
 
     var pix = swItems.imgData.data;
@@ -306,20 +343,24 @@ pub fn renderLine(
             if (dy == 0) {
                 var x = sclx1;
                 while (x != sclx2 + sx) : (x += sx) {
-                    const idx = As.u32((x + scly1 * WIDTH) << 2);
-                    renderPixel(
-                        pix.buffer, idx,
-                        clrR, clrG, clrB, clrA
-                    );
+                    if (x >= 0 and scly1 >= 0) {
+                        const idx = As.u32((x + scly1 * WIDTH) << 2);
+                        renderPixel(
+                            pix.buffer, idx,
+                            clrR, clrG, clrB, clrA
+                        );
+                    }
                 }
             } else if (dx == 0) {
                 var y = scly1;
                 while (y != scly2 + sy) : (y += sy) {
-                    const idx = As.u32((sclx1 + y * WIDTH) << 2);
-                    renderPixel(
-                        pix.buffer, idx,
-                        clrR, clrG, clrB, clrA
-                    );
+                    if (sclx1 >= 0 and y >= 0) {
+                        const idx = As.u32((sclx1 + y * WIDTH) << 2);
+                        renderPixel(
+                            pix.buffer, idx,
+                            clrR, clrG, clrB, clrA
+                        );
+                    }
                 }
             } else {
                 var err = dx - dy;
@@ -329,11 +370,13 @@ pub fn renderLine(
                 
                 while (true) {
                     if (xx >= 0 and xx < WIDTH) {
-                        const idx = As.u32((xx + yy * WIDTH) << 2);
-                        renderPixel(
-                            pix.buffer, idx,
-                            clrR, clrG, clrB, clrA
-                        );
+                        if (xx >= 0 and yy >= 0) {
+                            const idx = As.u32((xx + yy * WIDTH) << 2);
+                            renderPixel(
+                                pix.buffer, idx,
+                                clrR, clrG, clrB, clrA
+                            );
+                        }
                     }
 
                     if (xx == sclx2 and yy == scly2) {
@@ -361,34 +404,34 @@ pub fn renderLine(
         
         // check if lineCap is butt or round
         if (lineCap == 'b' or lineCap == 'r') {
-            const f32_halfSw = As.f32(halfSW) * swItems.scale;
+            const f32_halfSw = As.f32(halfSW) * ((scalation[0] + scalation[1]) / 2);
             const off1 = angle + Math.PI / 2.0;
             const off2 = angle - Math.PI / 2.0;
-            const quadX1 = sclx1 + As.i32(f32_halfSw * Math.cos(off1));
-            const quadY1 = scly1 + As.i32(f32_halfSw * Math.sin(off1));
-            const quadX2 = sclx1 + As.i32(f32_halfSw * Math.cos(off2));
-            const quadY2 = scly1 + As.i32(f32_halfSw * Math.sin(off2));
-            const quadX3 = sclx2 + As.i32(f32_halfSw * Math.cos(off2));
-            const quadY3 = scly2 + As.i32(f32_halfSw * Math.sin(off2));
-            const quadX4 = sclx2 + As.i32(f32_halfSw * Math.cos(off1));
-            const quadY4 = scly2 + As.i32(f32_halfSw * Math.sin(off1));
+            const quadX1 = As.f32(sclx1) + f32_halfSw * As.f32(Math.cos(off1));
+            const quadY1 = As.f32(scly1) + f32_halfSw * As.f32(Math.sin(off1));
+            const quadX2 = As.f32(sclx1) + f32_halfSw * As.f32(Math.cos(off2));
+            const quadY2 = As.f32(scly1) + f32_halfSw * As.f32(Math.sin(off2));
+            const quadX3 = As.f32(sclx2) + f32_halfSw * As.f32(Math.cos(off2));
+            const quadY3 = As.f32(scly2) + f32_halfSw * As.f32(Math.sin(off2));
+            const quadX4 = As.f32(sclx2) + f32_halfSw * As.f32(Math.cos(off1));
+            const quadY4 = As.f32(scly2) + f32_halfSw * As.f32(Math.sin(off1));
 
             renderTriangle(
                 quadX1, quadY1,
                 quadX2, quadY2,
                 quadX3, quadY3,
-                passItems, clr
+                passItems, clr, antialiasing
             );
             renderTriangle(
                 quadX1, quadY1,
                 quadX3, quadY3,
                 quadX4, quadY4,
-                passItems, clr
+                passItems, clr, antialiasing
             );
 
             if (lineCap == 'r') { // round
-                renderEllipse(sclx1, scly1, halfSW-1, halfSW-1, passItems, clr);
-                renderEllipse(sclx2, scly2, halfSW-1, halfSW-1, passItems, clr);
+                renderEllipse(As.f32(sclx1), As.f32(scly1), As.f32(halfSW-1), As.f32(halfSW-1), passItems, clr);
+                renderEllipse(As.f32(sclx2), As.f32(scly2), As.f32(halfSW-1), As.f32(halfSW-1), passItems, clr);
             }
         } else if (lineCap == 's') { // lineCap is square
             // let dir = Math.atan2(y2 - y1, x2 - x1),
@@ -413,15 +456,20 @@ pub fn renderLine(
 
 
 pub fn renderTriangle(
-    x1_: i32, y1_: i32, x2_: i32, y2_: i32, x3_: i32, y3_: i32, 
-    swItems: SoftwareItems, clr: [4]u8
+    x1_: f32, y1_: f32, x2_: f32, y2_: f32, x3_: f32, y3_: f32, 
+    swItems: SoftwareItems, clr: [4]u8, antialiasing: bool
 ) void {
-    const sclx1 = As.i32(As.f32(x1_) * swItems.scale);
-    const scly1 = As.i32(As.f32(y1_) * swItems.scale);
-    const sclx2 = As.i32(As.f32(x2_) * swItems.scale);
-    const scly2 = As.i32(As.f32(y2_) * swItems.scale);
-    const sclx3 = As.i32(As.f32(x3_) * swItems.scale);
-    const scly3 = As.i32(As.f32(y3_) * swItems.scale);
+    _=antialiasing;
+
+    const computedTransforms = computeTransform(swItems.transforms);
+    const scalation = computedTransforms.scale;
+    
+    const sclx1 = As.i32(x1_ * scalation[0]);
+    const scly1 = As.i32(y1_ * scalation[1]);
+    const sclx2 = As.i32(x2_ * scalation[0]);
+    const scly2 = As.i32(y2_ * scalation[1]);
+    const sclx3 = As.i32(x3_ * scalation[0]);
+    const scly3 = As.i32(y3_ * scalation[1]);
 
     const pix = swItems.imgData.data;
     const WIDTH = As.i32(swItems.imgData.width);
@@ -456,18 +504,18 @@ pub fn renderTriangle(
 }
 
 pub fn renderStrokeTriangle(
-    x1_: i32, y1_: i32, x2_: i32, y2_: i32, x3_: i32, y3_: i32, lineWidth: u32,
+    x1_: f32, y1_: f32, x2_: f32, y2_: f32, x3_: f32, y3_: f32, lineWidth: u32,
     swItems: SoftwareItems, clr: [4]u8, antialiasing: bool
 ) void {
-    const sclx1 = As.i32(As.f32(x1_) * swItems.scale);
-    const scly1 = As.i32(As.f32(y1_) * swItems.scale);
-    const sclx2 = As.i32(As.f32(x2_) * swItems.scale);
-    const scly2 = As.i32(As.f32(y2_) * swItems.scale);
-    const sclx3 = As.i32(As.f32(x3_) * swItems.scale);
-    const scly3 = As.i32(As.f32(y3_) * swItems.scale);
-    const passItems = SoftwareItems {
+    const sclx1 = As.i32(x1_ * swItems.scale);
+    const scly1 = As.i32(y1_ * swItems.scale);
+    const sclx2 = As.i32(x2_ * swItems.scale);
+    const scly2 = As.i32(y2_ * swItems.scale);
+    const sclx3 = As.i32(x3_ * swItems.scale);
+    const scly3 = As.i32(y3_ * swItems.scale);
+    const passItems = SoftwareItems{
         .imgData = swItems.imgData,
-        .scale = 1
+        .transforms = swItems.transforms.slice(0, Math.min(swItems.transforms.len, 1))
     };
 
     renderLine(
@@ -488,13 +536,16 @@ pub fn renderStrokeTriangle(
 
 
 pub fn renderRectangle(
-    x_: i32, y_: i32, w_: i32, h_: i32,
+    x_: f32, y_: f32, w_: f32, h_: f32,
     swItems: SoftwareItems, clr: [4]u8
 ) void {
-    const sclx = As.i32(As.f32(x_) * swItems.scale);
-    const scly = As.i32(As.f32(y_) * swItems.scale);
-    const sclw = As.i32(As.f32(w_) * swItems.scale);
-    const sclh = As.i32(As.f32(h_) * swItems.scale);
+    const computedTransforms = computeTransform(swItems.transforms);
+    const scalation = computedTransforms.scale;
+
+    const sclx = As.i32(x_ * scalation[0]);
+    const scly = As.i32(y_ * scalation[1]);
+    const sclw = As.i32(w_ * scalation[0]);
+    const sclh = As.i32(h_ * scalation[1]);
 
     const pix = swItems.imgData.data;
     const WIDTH = As.i32(swItems.imgData.width);
@@ -525,7 +576,7 @@ pub fn renderRectangle(
 }
 
 pub fn renderStrokeRectangle(
-    x_: i32, y_: i32, w_: i32, h_: i32, lineWidth: u32,
+    x_: f32, y_: f32, w_: f32, h_: f32, lineWidth: u32,
     swItems: SoftwareItems, clr: [4]u8, antialiasing: bool
 ) void {
 
@@ -712,13 +763,16 @@ pub fn renderPolygon(
 
 
 pub fn renderEllipse(
-    x_: i32, y_: i32, w_: i32, h_: i32,
+    x_: f32, y_: f32, w_: f32, h_: f32,
     swItems: SoftwareItems, clr: [4]u8
 ) void {
-    const sclx = As.i32(As.f32(x_) * swItems.scale);
-    const scly = As.i32(As.f32(y_) * swItems.scale);
-    const sclw = As.i32(As.f32(w_) * swItems.scale);
-    const sclh = As.i32(As.f32(h_) * swItems.scale);
+    const computedTransforms = computeTransform(swItems.transforms);
+    const scalation = computedTransforms.scale;
+
+    const sclx = As.i32(x_ * scalation[0]);
+    const scly = As.i32(y_ * scalation[1]);
+    const sclw = As.i32(w_ * scalation[0]);
+    const sclh = As.i32(h_ * scalation[1]);
 
     var n = sclw;
     const w2 = sclw * sclw;
@@ -774,15 +828,302 @@ pub fn renderEllipse(
     }
 }
 
-pub fn renderStrokeCircle(
-    x_: i32, y_: i32, d_: i32, lineWidth: u32,
+fn quadraticHelperRayIntersect(x1: f32, y1: f32, xc: f32, yc: f32, x2: f32, y2: f32, _rayX: f32, _rayY: f32) ?f32 {
+    var rayX = _rayX;
+    var rayY = _rayY;
+    
+    var t: f32 = undefined;  // t is the answer 
+    // Translate the problem st the curve's control point is at the origin. 
+    rayX -= xc;
+    rayY -= yc;
+    const ax = x1 - xc;
+    const bx = x2 - xc;
+    const ay = y1 - yc;
+    const by = y2 - yc;
+    
+    // Solve the quadratic equation of ray intersecting this curve. 
+    const a = rayX*(ay + by) - rayY*(ax + bx);
+    const b = rayY*2*ax - rayX*2*ay;
+    const c = rayX*ay - rayY*ax;
+    var discrim = b*b - 4*a*c;
+    if (Math.abs(a) < 0.000001) {
+        // Degenerate. Solve bt + c = 0 for t 
+        t = if (b != 0) (-c / b) else t;
+    } else if (discrim >= 0) {
+        discrim = Math.sqrt(discrim);
+        t = (-b + discrim) / 2 / a;
+        if (t < 0 or t > 1) {
+            t = (-b - discrim) / 2 / a;
+        }
+    }
+    
+    // Make sure that intersection is not on the opposite ray. 
+    const ot = 1 - t;
+    if (rayX * (ot*ot*ax + t*t*bx) < 0 or rayY * (ot*ot*ay + t*t*by) < 0) {
+        return null;
+    }
+    return t;
+}
+
+fn quadraticHelperBaseIntersect(x1: f32, y1: f32, xc: f32, yc: f32, x2: f32, y2: f32, x4: f32, y4: f32) ?[2]f32 {
+    const x3 = xc;
+    const y3 = yc;
+    const denom = (x1 - x2)*(y3 - y4) - (y1 - y2)*(x3 - x4);
+    const t = ((x1 - x3)*(y3 - y4) - (y1 - y3)*(x3 - x4)) / denom;
+    const u = ((x1 - x2)*(y1 - y3) - (y1 - y2)*(x1 - x3)) / -denom;
+    if (0 <= t and t <= 1 and u >= 0) {
+        return [_]f32{Math.lerp(x1, x2, t), Math.lerp(y1, y2, t)};
+    }
+    return null;
+}
+
+fn quadraticHelper_Point(a: f32, c: f32, b: f32, t: f32) f32 {
+    return c + (1 - t)*(1 - t)*(a - c) + t*t*(b - c);
+}
+
+fn quadraticHelperIsBetween(c: f32, a: f32, b: f32) bool {
+    return (a - c) * (b - c) < 0;
+}
+
+fn quadraticHelperInside(x: f32, y: f32, x1: f32, y1: f32, x2: f32, y2: f32, x3: f32, y3: f32) bool {
+    const base = quadraticHelperBaseIntersect(x1, y1, x2, y2, x3, y3, x, y);
+    const rayInt = quadraticHelperRayIntersect(x1, y1, x2, y2, x3, y3, x, y);
+    return base != null and rayInt != null and 0 <= rayInt.? and rayInt.? <= 1 and
+        quadraticHelperIsBetween(x, base.?[0], quadraticHelper_Point(x1, x2, x3, rayInt.?)) and
+        quadraticHelperIsBetween(y, base.?[1], quadraticHelper_Point(y1, y2, y3, rayInt.?));
+}
+
+fn quadraticHelperTangent(a: f32, c: f32, b: f32, t: f32) f32 {
+    return 2*(1 - t)*(c - a) + 2*t*(b - c);
+}
+
+fn quadraticHelperNormal(x1_: f32, y1_: f32, xc_: f32, yc_: f32, x2_: f32, y2_: f32, t: f32) [2]f32 {
+    const x1 = x1_ - xc_;
+    const x2 = x2_ - xc_;
+    const y1 = y1_ - yc_;
+    const y2 = y2_ - yc_;
+    const s = Math.sign(x1*y2 - x2*y1);  // cross product Z component unit direction
+    const dx = quadraticHelperTangent(x1_, xc_, x2_, t);
+    const dy = quadraticHelperTangent(y1_, yc_, y2_, t);
+    const d = Math.sqrt(dx*dx + dy*dy);
+    return [_]f32{-s * dy / d, s * dx / d};
+}
+
+// https://www.khanacademy.org/computer-programming/i/4573161800810496
+pub fn renderFillQuadratic(
+    x1_: f32, y1_: f32, x2_: f32, y2_: f32, x3_: f32, y3_: f32, 
     swItems: SoftwareItems, clr: [4]u8, antialiasing: bool
 ) void {
     _=antialiasing;
-    const sclx = As.i32(As.f32(x_) * swItems.scale);
-    const scly = As.i32(As.f32(y_) * swItems.scale);
-    const scld = As.i32(As.f32(d_) * swItems.scale);
-    const scllineWidth = As.f32(lineWidth) * swItems.scale;
+
+    const computedTransforms = computeTransform(swItems.transforms);
+    const scalation = computedTransforms.scale;
+    
+    const sclx1 = As.i32(x1_ * scalation[0]);
+    const scly1 = As.i32(y1_ * scalation[1]);
+    const sclx2 = As.i32(x2_ * scalation[0]);
+    const scly2 = As.i32(y2_ * scalation[1]);
+    const sclx3 = As.i32(x3_ * scalation[0]);
+    const scly3 = As.i32(y3_ * scalation[1]);
+
+    const pix = swItems.imgData.data;
+    const WIDTH = As.i32(swItems.imgData.width);
+    const HEIGHT = As.i32(swItems.imgData.height);
+
+    const clrR: u8 = clr[0];
+    const clrG: u8 = clr[1];
+    const clrB: u8 = clr[2];
+    const clrA: u8 = clr[3];
+
+    const minx = @max(0, @min(sclx1, sclx2, sclx3));
+    const maxx = @min(WIDTH, @max(sclx1, sclx2, sclx3));
+    const miny = @max(0, @min(scly1, scly2, scly3));
+    const maxy = @min(HEIGHT, @max(scly1, scly2, scly3));
+
+    var xx = minx;
+    while (xx < maxx) : (xx += 1) {
+        var yy = miny;
+        while (yy < maxy) : (yy += 1) {
+            const w1 = As.f32(sclx1 * (scly3 - scly1) + (yy - scly1) * (sclx3 - sclx1) - xx * (scly3 - scly1)) / As.f32((scly2 - scly1) * (sclx3 - sclx1) - (sclx2 - sclx1) * (scly3 - scly1));
+            const w2 = As.f32(sclx1 * (scly2 - scly1) + (yy - scly1) * (sclx2 - sclx1) - xx * (scly2 - scly1)) / As.f32((scly3 - scly1) * (sclx2 - sclx1) - (sclx3 - sclx1) * (scly2 - scly1));
+
+            if (w1 >= 0 and w2 >= 0 and w1 + w2 <= 1) {
+                if (quadraticHelperInside(As.f32(xx), As.f32(yy), As.f32(sclx1), As.f32(scly1), As.f32(sclx2), As.f32(scly2), As.f32(sclx3), As.f32(scly3))) {
+                    const idx = As.u32(xx + yy * WIDTH) << 2;
+                    renderPixel(
+                        pix.buffer, idx,
+                        clrR, clrG, clrB, clrA
+                    );
+                }
+            }
+        }
+    }
+}
+
+pub fn renderStrokeQuadraticBezierSegmentHelper(
+    x0_: f32, y0_: f32, x1_: f32, y1_: f32, x2_: f32, y2_: f32, lineWidth: u32,
+    swItems: SoftwareItems, clr: [4]u8, antialiasing: bool
+) void {
+    var x0 = x0_;
+    var y0 = y0_;
+    const x1 = x1_;
+    var y1 = y1_;
+    var x2 = x2_;
+    var y2 = y2_;
+    
+    var sx = x2-x1;
+    var sy = y2-y1;
+    var xx = x0-x1;
+    var yy = y0-y1;
+    var xy: f32 = undefined;         // relative values for checks
+    var dx: f32 = undefined;
+    var dy: f32 = undefined;
+    var err: f32 = undefined;
+    var cur = xx*sy-yy*sx;                    // curvature
+
+    const pix = swItems.imgData.data;
+    const WIDTH = As.i32(swItems.imgData.width);
+
+    const clrR: u8 = clr[0];
+    const clrG: u8 = clr[1];
+    const clrB: u8 = clr[2];
+    const clrA: u8 = clr[3];
+
+    if (sx*sx+sy*sy > xx*xx+yy*yy) { // begin with longer part  
+        x2 = x0; x0 = sx+x1; y2 = y0; y0 = sy+y1; cur = -cur;  // swap P0 P2
+    }  
+    if (cur != 0) {                                    // no straight line
+        xx += sx;
+        sx = if (x0 < x2) 1 else -1;
+        xx *= sx; // x step direction
+        yy += sy;
+        sy = if (y0 < y2) 1 else -1;
+        yy *= sy; // y step direction
+        xy = 2*xx*yy; xx *= xx; yy *= yy;          // differences 2nd degree
+        if (cur*sx*sy < 0) {                           // negated curvature?
+            xx = -xx; yy = -yy; xy = -xy; cur = -cur;
+        }
+        dx = 4.0*sy*cur*(x1-x0)+xx-xy;             // differences 1st degree
+        dy = 4.0*sx*cur*(y0-y1)+yy-xy;
+        xx += xx; yy += yy; err = dx+dy+xy;                // error 1st step
+        while (true) {
+            if (x0 > 0 and y0 > 0) {
+                renderPixel(
+                    pix.buffer, As.u32(As.i32(x0) + As.i32(y0) * WIDTH) << 2,
+                    clrR, clrG, clrB, clrA
+                );
+            }
+            if (x0 == x2 and y0 == y2) {
+                return;  // last pixel -> curve finished 
+            }
+            y1 = As.f32(@intFromBool(2*err < dx));                  // save value for test of y step
+            if (2*err > dy) { x0 += sx; dx -= xy; dy += yy; err += dy; } // x step
+            if ( y1 != 0  ) { y0 += sy; dy -= xy; dx += xx; err += dx; } // y step
+
+            if (dy >= dx ) { // gradient negates -> algorithm fails
+                break;
+            }
+        }     
+    }
+
+    const passItems = SoftwareItems{
+        .imgData = swItems.imgData,
+        .transforms = swItems.transforms.slice(0, Math.min(swItems.transforms.len, 1))
+    };
+    
+    renderLine(
+        x0, y0, x2, y2, lineWidth, 'r',
+        passItems, clr, antialiasing
+    );
+}
+
+pub fn renderStrokeQuadratic(
+    x0_: f32, y0_: f32, x1_: f32, y1_: f32, x2_: f32, y2_: f32, lineWidth: u32,
+    swItems: SoftwareItems, clr: [4]u8, antialiasing: bool
+) void {
+    const computedTransforms = computeTransform(swItems.transforms);
+    const scalation = computedTransforms.scale;
+    
+    // round to avoid infinite loops
+    var x0 = Math.round(x0_ * scalation[0]);
+    var y0 = Math.round(y0_ * scalation[1]);
+    var x1 = Math.round(x1_ * scalation[0]);
+    var y1 = Math.round(y1_ * scalation[1]);
+    var x2 = Math.round(x2_ * scalation[0]);
+    var y2 = Math.round(y2_ * scalation[1]);
+
+    const passItems = SoftwareItems{
+        .imgData = swItems.imgData,
+        .transforms = swItems.transforms.slice(0, Math.min(swItems.transforms.len, 1))
+    };
+
+    // plot any quadratic Bezier curve
+    var x = x0 - x1;
+    var y = y0 - y1;
+    var t = x0 - 2 * x1 + x2;
+    var r: f32 = undefined;
+    if (x * (x2 - x1) > 0) {
+        // horizontal cut at P4?
+        if (y * (y2 - y1) > 0) {// vertical cut at P6 too?
+            if (Math.abs((y0 - 2 * y1 + y2) / t * x) > Math.abs(y)) {
+                // which first?
+                x0 = x2;
+                x2 = x + x1;
+                y0 = y2;
+                y2 = y + y1; // swap points
+            } // now horizontal cut at P4 comes first
+        }
+        t = (x0 - x1) / t;
+        r = (1 - t) * ((1 - t) * y0 + 2.0 * t * y1) + t * t * y2; // By(t=P4)
+        t = (x0 * x2 - x1 * x1) * t / (x0 - x1); // gradient dP4/dx=0
+        x = Math.floor(t + 0.5);
+        y = Math.floor(r + 0.5);
+        r = (y1 - y0) * (t - x0) / (x1 - x0) + y0; // intersect P3 | P0 P1
+        renderStrokeQuadraticBezierSegmentHelper(
+            x0, y0, x, Math.floor(r + 0.5), x, y, lineWidth,
+            passItems, clr, antialiasing
+        );
+        r = (y1 - y2) * (t - x2) / (x1 - x2) + y2; // intersect P4 | P1 P2
+        x1 = x;
+        x0 = x1;
+        y0 = y;
+        y1 = Math.floor(r + 0.5); // P0 = P4, P1 = P8
+    }
+    if ((y0 - y1) * (y2 - y1) > 0) {
+        // vertical cut at P6?
+        t = y0 - 2 * y1 + y2;
+        t = (y0 - y1) / t;
+        r = (1 - t) * ((1 - t) * x0 + 2.0 * t * x1) + t * t * x2; // Bx(t=P6)
+        t = (y0 * y2 - y1 * y1) * t / (y0 - y1); // gradient dP6/dy=0
+        x = Math.floor(r + 0.5);
+        y = Math.floor(t + 0.5);
+        r = (x1 - x0) * (t - y0) / (y1 - y0) + x0; // intersect P6 | P0 P1
+        renderStrokeQuadraticBezierSegmentHelper(
+            x0, y0, Math.floor(r + 0.5), y, x, y, lineWidth,
+            passItems, clr, antialiasing
+        );
+        r = (x1 - x2) * (t - y2) / (y1 - y2) + x2; // intersect P7 | P1 P2
+        x0 = x;
+        x1 = Math.floor(r + 0.5);
+        y1 = y;
+        y0 = y1; // P0 = P6, P1 = P7
+    }
+    renderStrokeQuadraticBezierSegmentHelper(
+        x0, y0, x1, y1, x2, y2, lineWidth,
+        passItems, clr, antialiasing
+    ); // remaining part
+}
+
+pub fn renderStrokeCircleHelper(
+    x_: f32, y_: f32, d_: f32, lineWidth: u32,
+    swItems: SoftwareItems, clr: [4]u8, antialiasing: bool
+) void {
+    _=antialiasing;
+
+    const sclx = As.i32(As.f32(x_));
+    const scly = As.i32(As.f32(y_));
+    const scld = As.i32(As.f32(d_));
+    const scllineWidth = As.f32(lineWidth);
 
     var scanLines = Array([2]i32).alloc(As.u32(Math.ceil(As.f32(scld) / 2 + scllineWidth / 2)));
     scanLines.len = scanLines.capacity();
@@ -861,22 +1202,235 @@ pub fn renderStrokeCircle(
 }
 
 pub fn renderStrokeEllipse(
-    x_: i32, y_: i32, w_: i32, h_: i32, lineWidth: u32,
+    x: f32, y: f32, w: f32, h: f32, lineWidth: u32,
     swItems: SoftwareItems, clr: [4]u8, antialiasing: bool
 ) void {
-    if (w_ == h_) {
-        renderStrokeCircle(x_, y_, w_ * 2, lineWidth, swItems, clr, antialiasing);
+    const computedTransforms = computeTransform(swItems.transforms);
+    const scalation = computedTransforms.scale;
+
+    if (w * scalation[0] == h * scalation[1]) {
+        renderStrokeCircleHelper(x * scalation[0], y * scalation[0], w * 2 * scalation[0], As.u32(As.f32(lineWidth) * scalation[0]), swItems, clr, antialiasing);
     } else {
         var i: f32 = 0.0;
         while (i < Math.PI * 2) : (i += 0.6) {
-            const x1 = x_ + As.i32(Math.cos(i) * As.f32(w_));
-            const y1 = y_ + As.i32(Math.sin(i) * As.f32(h_));
-            const x2 = x_ + As.i32(Math.cos(i + 0.6) * As.f32(w_));
-            const y2 = y_ + As.i32(Math.sin(i + 0.6) * As.f32(h_));
+            const x1 = x + As.f32(Math.cos(i) * w * scalation[0]);
+            const y1 = y + As.f32(Math.sin(i) * h * scalation[1]);
+            const x2 = x + As.f32(Math.cos(i + 0.6) * w * scalation[0]);
+            const y2 = y + As.f32(Math.sin(i + 0.6) * h * scalation[1]);
             renderLine(
                 x1, y1, x2, y2, lineWidth, 'r',
                 swItems, clr, antialiasing
             );
         }
     }
+}
+
+pub fn renderStrokeText(
+    txt: *String, x_: f32, y_: f32, maxWidth: f32, lineWidth: u32,
+    swItems: SoftwareItems, clr: [4]u8, fontInfo: FontInfo, antialiasing: bool
+) void {
+    _=maxWidth;
+
+    // const computedTransforms = computeTransform(swItems.transforms);
+    // const scalation = computedTransforms.scale;
+
+    const lines = txt.split("\n");
+    
+    const VERT = 0;
+    const QUAD = 1;
+    const HOLE = 2;
+
+    const x = As.f64(x_) ;
+    var y = As.f64(y_) ;
+
+    const myFont = fontInfo.font;
+    const sz = As.f64(fontInfo.size);
+    var l: u32 = 0; while (l < lines.len) : (l += 1) {
+        var line = lines.get(l);
+        var xOff: f64 = 0;
+        var t: u32 = 0; while (t < line.len()) : (t += 1) {
+            const chCode = line.charCodeAt(t);
+            const chDataOrNull = myFont.characterMap.get(chCode);
+            var chData: [2]f32 = undefined;
+            if (chDataOrNull != null) {
+                chData = chDataOrNull.?;
+            } else {
+                @panic("Unsupported Character");
+            }
+            const idx = As.u32(chData[0] - 1);
+            const width = chData[1];
+            const glyph = myFont.glyphs.get(idx);
+            
+            var pathX: f64 = undefined;
+            var pathY: f64 = undefined;
+            
+            var i: u32 = 0;
+            var isShapeStart = true;
+            while (i < glyph.len) {
+                var shape = glyph.get(i);
+                if (shape == HOLE) {
+                    i += 1;
+                    isShapeStart = true;
+                    // cairo.cairo_fill(crItems.ctx);
+                    // cairo.cairo_set_source_rgba(crItems.ctx, 0.0, 0.0, 0.0, 1.0);
+                }
+                
+                if (isShapeStart) {
+                    if (shape != HOLE) {
+                        // cairo.cairo_set_source_rgba(crItems.ctx, 1.0, 1.0, 1.0, 1.0);
+                    }
+                    // cairo.cairo_new_path(crItems.ctx);
+                }
+                
+                shape = glyph.get(i);
+                if (shape == VERT) {
+                    const xPos = x + glyph.get(i+1) * sz ;
+                    const yPos = y + glyph.get(i+2) * sz ;
+                    if (isShapeStart) {
+                        pathX = xOff + xPos;
+                        pathY = yPos;
+                    } else {
+                        renderLine(
+                            As.f32(pathX), As.f32(pathY), As.f32(xOff + xPos), As.f32(yPos), lineWidth, 'b',
+                            swItems, clr, antialiasing
+                        );
+                        pathX = xOff + xPos;
+                        pathY = yPos;
+                    }
+                    
+                    i += 3;
+                } else if (shape == QUAD) {
+                    const cpxPos = x + glyph.get(i+1) * sz;
+                    const cpyPos = y + glyph.get(i+2) * sz;
+                    const xPos = x + glyph.get(i+3) * sz ;
+                    const yPos = y + glyph.get(i+4) * sz ;
+                    renderStrokeQuadratic(
+                        As.f32(pathX), As.f32(pathY), As.f32(xOff + cpxPos), As.f32(cpyPos), As.f32(xOff + xPos), As.f32(yPos), lineWidth,
+                        swItems, clr, antialiasing
+                    );
+                    pathX = xOff + xPos;
+                    pathY = yPos;
+                    
+                    i += 5;
+                }
+        
+                if (isShapeStart) {
+                    isShapeStart = false;
+                }
+                
+                if (i == glyph.len) {
+                    // cairo.cairo_fill(crItems.ctx);
+                }
+            }
+            
+            xOff += width * sz;
+        }
+        
+        y += (myFont.ascent + myFont.descent) * sz * 1.2;
+    }   
+}
+
+pub fn renderFillText(
+    txt: *String, x_: f32, y_: f32, maxWidth: f32, lineWidth: u32,
+    swItems: SoftwareItems, clr: [4]u8, fontInfo: FontInfo, antialiasing: bool
+) void {
+    _=maxWidth;
+
+    // const computedTransforms = computeTransform(swItems.transforms);
+    // const scalation = computedTransforms.scale;
+
+    const lines = txt.split("\n");
+    
+    const VERT = 0;
+    const QUAD = 1;
+    const HOLE = 2;
+
+    const x = As.f64(x_) ;
+    var y = As.f64(y_) ;
+
+    const myFont = fontInfo.font;
+    const sz = As.f64(fontInfo.size);
+    var l: u32 = 0; while (l < lines.len) : (l += 1) {
+        var line = lines.get(l);
+        var xOff: f64 = 0;
+        var t: u32 = 0; while (t < line.len()) : (t += 1) {
+            const chCode = line.charCodeAt(t);
+            const chDataOrNull = myFont.characterMap.get(chCode);
+            var chData: [2]f32 = undefined;
+            if (chDataOrNull != null) {
+                chData = chDataOrNull.?;
+            } else {
+                @panic("Unsupported Character");
+            }
+            const idx = As.u32(chData[0] - 1);
+            const width = chData[1];
+            const glyph = myFont.glyphs.get(idx);
+            
+            var pathX: f64 = undefined;
+            var pathY: f64 = undefined;
+            
+            var i: u32 = 0;
+            var isShapeStart = true;
+            while (i < glyph.len) {
+                var shape = glyph.get(i);
+                if (shape == HOLE) {
+                    i += 1;
+                    isShapeStart = true;
+                    // cairo.cairo_fill(crItems.ctx);
+                    // cairo.cairo_set_source_rgba(crItems.ctx, 0.0, 0.0, 0.0, 1.0);
+                }
+                
+                if (isShapeStart) {
+                    if (shape != HOLE) {
+                        // cairo.cairo_set_source_rgba(crItems.ctx, 1.0, 1.0, 1.0, 1.0);
+                    }
+                    // cairo.cairo_new_path(crItems.ctx);
+                }
+                
+                shape = glyph.get(i);
+                if (shape == VERT) {
+                    const xPos = x + glyph.get(i+1) * sz ;
+                    const yPos = y + glyph.get(i+2) * sz ;
+                    if (isShapeStart) {
+                        pathX = xOff + xPos;
+                        pathY = yPos;
+                    } else {
+                        renderLine(
+                            As.f32(pathX), As.f32(pathY), As.f32(xOff + xPos), As.f32(yPos), lineWidth, 'b',
+                            swItems, clr, antialiasing
+                        );
+                        pathX = xOff + xPos;
+                        pathY = yPos;
+                    }
+                    
+                    i += 3;
+                } else if (shape == QUAD) {
+                    const cpxPos = x + glyph.get(i+1) * sz;
+                    const cpyPos = y + glyph.get(i+2) * sz;
+                    const xPos = x + glyph.get(i+3) * sz ;
+                    const yPos = y + glyph.get(i+4) * sz ;
+                    renderFillQuadratic(
+                        As.f32(pathX), As.f32(pathY), As.f32(xOff + cpxPos), As.f32(cpyPos), As.f32(xOff + xPos), As.f32(yPos),
+                        swItems, clr, antialiasing
+                    );
+                    pathX = xOff + xPos;
+                    pathY = yPos;
+                    
+                    i += 5;
+                }
+        
+                if (isShapeStart) {
+                    isShapeStart = false;
+                }
+                
+                if (i == glyph.len) {
+                    // cairo.cairo_fill(crItems.ctx);
+                }
+            }
+            
+            xOff += width * sz;
+        }
+        
+        y += (myFont.ascent + myFont.descent) * sz * 1.2;
+    }   
 }

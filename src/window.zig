@@ -7,7 +7,7 @@ const println = vexlib.println;
 const zcanvas = @import("./zcanvas.zig");
 const Canvas = zcanvas.Canvas;
 
-const sdl = @cImport({
+pub const sdl = @cImport({
     @cInclude("SDL2/SDL.h");
 });
 
